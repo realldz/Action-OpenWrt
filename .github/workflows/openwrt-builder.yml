@@ -1,8 +1,8 @@
 #
 # https://github.com/P3TERX/Actions-OpenWrt
 #
-# File: .github/workflows/openwrt-builder.yml
-# Description: Build OpenWrt using GitHub Actions with separate jobs (Optimized Artifacts)
+# File: .github/workflows/openwrt-bulder.yml
+# Description: Build OpenWrt using GitHub Actions
 #
 # Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
 #
@@ -10,32 +10,28 @@
 # See /LICENSE for more information.
 #
 
-name: OpenWrt Builder (Firmware + Packages)
+name: OpenWrt Builder
 
 on:
+  repository_dispatch:
   workflow_dispatch:
-    inputs:
-      toolchain_url:
-        description: 'External Toolchain URL'
-        required: false
-        default: ''
 
 env:
-  REPO_URL: https://github.com/realldz/openwrt
-  REPO_BRANCH: openwrt-24.10
+  REPO_URL: https://github.com/coolsnowwolf/lede
+  REPO_BRANCH: master
+  FEEDS_CONF: feeds.conf.default
+  CONFIG_FILE: .config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
-  TOOLCHAIN_URL: ${{ github.event.inputs.toolchain_url }}
 
 jobs:
-  # JOB 1: CHỈ BUILD FIRMWARE
-  build_firmware:
-    name: Build Firmware
+  build:
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write
-    
+
     steps:
     - name: Checkout
       uses: actions/checkout@main
@@ -51,152 +47,114 @@ jobs:
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
-
-    - name: Setup external toolchain
-      if: env.TOOLCHAIN_URL
-      run: |
-        echo "::group::Setup External Toolchain"
-        sudo mkdir -p /opt/toolchain
-        sudo chown $USER:$USER /opt/toolchain
-        wget -qO- "${{ env.TOOLCHAIN_URL }}" | sudo tar -C /opt/toolchain --strip-components=1 --zstd -xvf 
-        echo "External toolchain downloaded and extracted to /opt/toolchain"
-        echo "TOOLCHAIN_PATH=/opt/toolchain" >> $GITHUB_ENV
-        echo "::endgroup::"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
 
     - name: Clone source code
-      run: git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
-
-    - name: Load custom feeds and configuration for Firmware
+      working-directory: /workdir
       run: |
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+    - name: Load custom feeds
+      run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $DIY_P1_SH
         cd openwrt
-        [ -e ../feeds.conf.default ] && cp ../feeds.conf.default ./feeds.conf.default
-        chmod +x ../$DIY_P1_SH && ../$DIY_P1_SH
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
-        cp ../.config-firmware ./.config
-        if [ -n "${{ env.TOOLCHAIN_URL }}" ]; then
-          echo "CONFIG_EXTERNAL_TOOLCHAIN=y" >> .config
-          echo "CONFIG_TOOLCHAIN_ROOT=\"/opt/toolchain\"" >> .config
-          # Auto-detect toolchain prefix
-          PREFIX=$(basename $(find /opt/toolchain/bin -type f -name '*-gcc') -gcc)
-          echo "CONFIG_TOOLCHAIN_PREFIX=\"$PREFIX\"" >> .config
-          echo "CONFIG_TARGET_TOOLCHAIN_PREFIX=\"$PREFIX\"" >> .config
-        fi
-        [ -e ../files ] && cp -r ../files ./files
-        chmod +x ../$DIY_P2_SH && ../$DIY_P2_SH
-        make defconfig
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+
+    - name: Update feeds
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: Install feeds
+      run: cd openwrt && ./scripts/feeds install -a
+
+    - name: Load custom configuration
+      run: |
+        [ -e files ] && mv files openwrt/files
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P2_SH
 
     - name: Download package
+      id: package
       run: |
         cd openwrt
-        make download -j$(nproc)
+        make defconfig
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
 
-    - name: Compile Firmware
+    - name: Compile the firmware
       id: compile
       run: |
         cd openwrt
-        make -j$(nproc) || make -j1 V=s
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
-        echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    - name: Organize Firmware files
+    - name: Check space usage
+      if: (!cancelled())
+      run: df -hT
+
+    - name: Upload bin directory
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: openwrt/bin
+
+    - name: Organize files
       id: organize
+      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
-        echo "FIRMWARE_PATH=$PWD" >> $GITHUB_ENV
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
-    # - name: Upload Firmware to Release
-    #   uses: softprops/action-gh-release@master
-    #   if: steps.organize.outputs.status == 'success'
-    #   env:
-    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    #   with:
-    #     tag_name: openwrt-firmware-${{ env.FILE_DATE }}
-    #     body: "Firmware build at ${{ env.FILE_DATE }}"
-    #     files: ${{ env.FIRMWARE_PATH }}/*
-
-    - name: Upload firmware artifact
+    - name: Upload firmware directory
       uses: actions/upload-artifact@main
-      if: steps.organize.outputs.status == 'success'
+      if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: openwrt-firmware-${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE_PATH }}
+        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
 
-    # === THAY ĐỔI Ở ĐÂY: Chỉ upload những gì cần thiết ===
-    - name: Upload Core Build Environment
-      uses: actions/upload-artifact@main
-      with:
-        name: openwrt-core-env
-        path: |
-          openwrt/staging_dir
-          openwrt/dl
-          openwrt/feeds
-          openwrt/.config
-
-  # JOB 2: BUILD CÁC GÓI MỞ RỘNG VÀ DEPLOY LÊN GH-PAGES
-  build_packages_and_deploy:
-    name: Build and Deploy Packages
-    needs: build_firmware
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: write
-      pages: write
-      id-token: write
-    
-    steps:
-    - name: Checkout
-      uses: actions/checkout@main
-
-    - name: Clone source code
-      run: git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
-
-    # === THAY ĐỔI Ở ĐÂY: Tải xuống môi trường cốt lõi ===
-    - name: Download Core Build Environment
-      uses: actions/download-artifact@main
-      with:
-        name: openwrt-core-env
-        path: openwrt
-
-    - name: Load custom feeds and configuration for Packages
+    - name: Generate release tag
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        cd openwrt
-        # Thiết lập lại toolchain
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
-        # Sử dụng file config dành riêng cho packages
-        cp ../.config-packages ./.config
-        [ -e ../files ] && cp -r ../files ./files
-        chmod +x ../$DIY_P2_SH && ../$DIY_P2_SH
-        make defconfig
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        touch release.txt
+        [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
+        echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Compile Packages
-      run: |
-        cd openwrt
-        chmod +x staging_dir/host/bin/*
-        make package/index
-        make -j$(nproc) package/install || make -j1 package/install V=s
-
-    - name: Organize packages for deployment
-      run: |
-        cd openwrt/bin/packages
-        ARCH_DIR=$(ls -d */ | head -n 1)
-        echo "Found architecture directory: $ARCH_DIR"
-        mkdir -p ../../../deploy
-        mv $ARCH_DIR/* ../../../deploy/
-        echo "Packages are ready for deployment."
-
-    - name: Deploy to gh-pages branch
-      uses: peaceiris/actions-gh-pages@v3
+    - name: Upload firmware to release
+      uses: softprops/action-gh-release@master
+      if: steps.tag.outputs.status == 'success' && !cancelled()
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: deploy
-        publish_branch: gh-pages
-        force_orphan: true
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        files: ${{ env.FIRMWARE }}/*
 
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@main
       with:
-        retain_days: 1
-        keep_minimum_runs: 1
+        retain_days: 0
+        keep_minimum_runs: 2
+
+    - name: Remove old Releases
+      uses: dev-drprasad/delete-older-releases@master
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
