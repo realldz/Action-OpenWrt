@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "architecture": "mipsel_24kc",
+  "packages": {
+    "cgi-io": "2022.08.10~901b0f04-r21",
+    "openssh-sftp-server": "9.9_p2-r1"
+  }
+}
