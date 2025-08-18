@@ -2,7 +2,7 @@
 # https://github.com/P3TERX/Actions-OpenWrt
 #
 # File: .github/workflows/openwrt-builder.yml
-# Description: Build OpenWrt using GitHub Actions with separate jobs
+# Description: Build OpenWrt using GitHub Actions with separate jobs (Optimized Artifacts)
 #
 # Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
 #
@@ -29,81 +29,79 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
-
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@main
+    - name: Checkout
+      uses: actions/checkout@main
 
-      - name: Initialization environment
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force
-          sudo -E apt-get -qq update
-          sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
-          sudo -E apt-get -qq autoremove --purge
-          sudo -E apt-get -qq clean
-          sudo timedatectl set-timezone "$TZ"
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
 
-      - name: Clone source code
-        run: git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
+    - name: Clone source code
+      run: git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
 
-      - name: Load custom feeds and configuration for Firmware
-        run: |
-          cd openwrt
-          [ -e ../feeds.conf.default ] && cp ../feeds.conf.default ./feeds.conf.default
-          chmod +x ../$DIY_P1_SH && ../$DIY_P1_SH
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
-          # Sử dụng file config dành riêng cho firmware
-          cp ../.config-firmware ./.config
-          [ -e ../files ] && cp -r ../files ./files
-          chmod +x ../$DIY_P2_SH && ../$DIY_P2_SH
-          make defconfig
+    - name: Load custom feeds and configuration for Firmware
+      run: |
+        cd openwrt
+        [ -e ../feeds.conf.default ] && cp ../feeds.conf.default ./feeds.conf.default
+        chmod +x ../$DIY_P1_SH && ../$DIY_P1_SH
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+        cp ../.config-firmware ./.config
+        [ -e ../files ] && cp -r ../files ./files
+        chmod +x ../$DIY_P2_SH && ../$DIY_P2_SH
+        make defconfig
 
-      - name: Download package
-        run: |
-          cd openwrt
-          make download -j$(nproc)
+    - name: Download package
+      run: |
+        cd openwrt
+        make download -j$(nproc)
 
-      - name: Compile Firmware
-        id: compile
-        run: |
-          cd openwrt
-          make -j$(nproc) || make -j1 V=s
-          echo "status=success" >> $GITHUB_OUTPUT
-          echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+    - name: Compile Firmware
+      id: compile
+      run: |
+        cd openwrt
+        make -j$(nproc) || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-      - name: Organize Firmware files
-        id: organize
-        run: |
-          cd openwrt/bin/targets/*/*
-          rm -rf packages
-          echo "FIRMWARE_PATH=$PWD" >> $GITHUB_ENV
-          echo "status=success" >> $GITHUB_OUTPUT
+    - name: Organize Firmware files
+      id: organize
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE_PATH=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
 
-      - name: Upload Firmware to Release
-        uses: softprops/action-gh-release@master
-        if: steps.organize.outputs.status == 'success'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: openwrt-firmware-${{ env.FILE_DATE }}
-          body: 'Firmware build at ${{ env.FILE_DATE }}'
-          files: ${{ env.FIRMWARE_PATH }}/*
+    - name: Upload Firmware to Release
+      uses: softprops/action-gh-release@master
+      if: steps.organize.outputs.status == 'success'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: openwrt-firmware-${{ env.FILE_DATE }}
+        body: "Firmware build at ${{ env.FILE_DATE }}"
+        files: ${{ env.FIRMWARE_PATH }}/*
 
-      - name: Upload Build Environment Artifact
-        uses: actions/upload-artifact@main
-        with:
-          name: openwrt-build-env
-          path: |
-            openwrt/dl
-            openwrt/feeds
-            openwrt/staging_dir
-            openwrt/build_dir
-            openwrt/tmp
-            openwrt/.config # Lưu lại config đã dùng để build firmware
+    # === THAY ĐỔI Ở ĐÂY: Chỉ upload những gì cần thiết ===
+    - name: Upload Core Build Environment
+      uses: actions/upload-artifact@main
+      with:
+        name: openwrt-core-env
+        path: |
+          openwrt/staging_dir
+          openwrt/dl
+          openwrt/feeds
+          openwrt/.config
 
   # JOB 2: BUILD CÁC GÓI MỞ RỘNG VÀ DEPLOY LÊN GH-PAGES
   build_packages_and_deploy:
@@ -114,59 +112,58 @@ jobs:
       contents: write
       pages: write
       id-token: write
-
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@main
+    - name: Checkout
+      uses: actions/checkout@main
 
-      - name: Clone source code
-        run: git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
+    - name: Clone source code
+      run: git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
 
-      - name: Download Build Environment Artifact
-        uses: actions/download-artifact@main
-        with:
-          name: openwrt-build-env
-          path: openwrt
+    # === THAY ĐỔI Ở ĐÂY: Tải xuống môi trường cốt lõi ===
+    - name: Download Core Build Environment
+      uses: actions/download-artifact@main
+      with:
+        name: openwrt-core-env
+        path: openwrt
 
-      - name: Load custom feeds and configuration for Packages
-        run: |
-          cd openwrt
-          [ -e ../feeds.conf.default ] && cp ../feeds.conf.default ./feeds.conf.default
-          chmod +x ../$DIY_P1_SH && ../$DIY_P1_SH
-          # Không cần update feeds lại vì đã có trong artifact
-          ./scripts/feeds install -a
-          # Sử dụng file config dành riêng cho packages
-          cp ../.config-packages ./.config
-          [ -e ../files ] && cp -r ../files ./files
-          chmod +x ../$DIY_P2_SH && ../$DIY_P2_SH
-          make defconfig
+    - name: Load custom feeds and configuration for Packages
+      run: |
+        cd openwrt
+        # Thiết lập lại toolchain
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+        # Sử dụng file config dành riêng cho packages
+        cp ../.config-packages ./.config
+        [ -e ../files ] && cp -r ../files ./files
+        chmod +x ../$DIY_P2_SH && ../$DIY_P2_SH
+        make defconfig
 
-      - name: Compile Packages
-        run: |
-          cd openwrt
-          # Chỉ build các gói, không build lại image
-          make package/index
-          make -j$(nproc) package/install || make -j1 package/install V=s
+    - name: Compile Packages
+      run: |
+        cd openwrt
+        make package/index
+        make -j$(nproc) package/install || make -j1 package/install V=s
 
-      - name: Organize packages for deployment
-        run: |
-          cd openwrt/bin/packages
-          ARCH_DIR=$(ls -d */ | head -n 1)
-          echo "Found architecture directory: $ARCH_DIR"
-          mkdir -p ../../../deploy
-          mv $ARCH_DIR/* ../../../deploy/
-          echo "Packages are ready for deployment."
+    - name: Organize packages for deployment
+      run: |
+        cd openwrt/bin/packages
+        ARCH_DIR=$(ls -d */ | head -n 1)
+        echo "Found architecture directory: $ARCH_DIR"
+        mkdir -p ../../../deploy
+        mv $ARCH_DIR/* ../../../deploy/
+        echo "Packages are ready for deployment."
 
-      - name: Deploy to gh-pages branch
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: deploy
-          publish_branch: gh-pages
-          force_orphan: true
+    - name: Deploy to gh-pages branch
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: deploy
+        publish_branch: gh-pages
+        force_orphan: true
 
-      - name: Delete workflow runs
-        uses: Mattraks/delete-workflow-runs@main
-        with:
-          retain_days: 1
-          keep_minimum_runs: 1
+    - name: Delete workflow runs
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        retain_days: 1
+        keep_minimum_runs: 1
