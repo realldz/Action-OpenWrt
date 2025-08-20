@@ -142,6 +142,7 @@ jobs:
     - name: Compile Packages
       run: |
         cd openwrt
+        chmod +x staging_dir/host/bin/*
         make package/index
         make -j$(nproc) package/install || make -j1 package/install V=s
 
