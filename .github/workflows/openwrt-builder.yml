@@ -14,6 +14,11 @@ name: OpenWrt Builder (Firmware + Packages)
 
 on:
   workflow_dispatch:
+    inputs:
+      toolchain_url:
+        description: 'External Toolchain URL'
+        required: false
+        default: ''
 
 env:
   REPO_URL: https://github.com/realldz/openwrt
@@ -21,6 +26,7 @@ env:
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
   TZ: Asia/Shanghai
+  TOOLCHAIN_URL: ${{ github.event.inputs.toolchain_url }}
 
 jobs:
   # JOB 1: CHỈ BUILD FIRMWARE
@@ -46,6 +52,17 @@ jobs:
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
 
+    - name: Setup external toolchain
+      if: env.TOOLCHAIN_URL
+      run: |
+        echo "::group::Setup External Toolchain"
+        sudo mkdir -p /opt/toolchain
+        sudo chown $USER:$USER /opt/toolchain
+        wget -qO- "${{ env.TOOLCHAIN_URL }}" | sudo tar -C /opt/toolchain --strip-components=1 -xJ
+        echo "External toolchain downloaded and extracted to /opt/toolchain"
+        echo "TOOLCHAIN_PATH=/opt/toolchain" >> $GITHUB_ENV
+        echo "::endgroup::"
+
     - name: Clone source code
       run: git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
 
@@ -57,6 +74,14 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
         cp ../.config-firmware ./.config
+        if [ -n "${{ env.TOOLCHAIN_URL }}" ]; then
+          echo "CONFIG_EXTERNAL_TOOLCHAIN=y" >> .config
+          echo "CONFIG_TOOLCHAIN_ROOT=\"/opt/toolchain\"" >> .config
+          # Auto-detect toolchain prefix
+          PREFIX=$(basename $(find /opt/toolchain/bin -type f -name '*-gcc') -gcc)
+          echo "CONFIG_TOOLCHAIN_PREFIX=\"$PREFIX\"" >> .config
+          echo "CONFIG_TARGET_TOOLCHAIN_PREFIX=\"$PREFIX\"" >> .config
+        fi
         [ -e ../files ] && cp -r ../files ./files
         chmod +x ../$DIY_P2_SH && ../$DIY_P2_SH
         make defconfig
@@ -82,15 +107,22 @@ jobs:
         echo "FIRMWARE_PATH=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Upload Firmware to Release
-      uses: softprops/action-gh-release@master
+    # - name: Upload Firmware to Release
+    #   uses: softprops/action-gh-release@master
+    #   if: steps.organize.outputs.status == 'success'
+    #   env:
+    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #   with:
+    #     tag_name: openwrt-firmware-${{ env.FILE_DATE }}
+    #     body: "Firmware build at ${{ env.FILE_DATE }}"
+    #     files: ${{ env.FIRMWARE_PATH }}/*
+
+    - name: Upload firmware artifact
+      uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: openwrt-firmware-${{ env.FILE_DATE }}
-        body: "Firmware build at ${{ env.FILE_DATE }}"
-        files: ${{ env.FIRMWARE_PATH }}/*
+        name: openwrt-firmware-${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE_PATH }}
 
     # === THAY ĐỔI Ở ĐÂY: Chỉ upload những gì cần thiết ===
     - name: Upload Core Build Environment
