@@ -58,7 +58,7 @@ jobs:
         echo "::group::Setup External Toolchain"
         sudo mkdir -p /opt/toolchain
         sudo chown $USER:$USER /opt/toolchain
-        wget -qO- "${{ env.TOOLCHAIN_URL }}" | sudo tar --strip-components=1 -xz -C /opt/toolchain
+        wget -qO- "${{ env.TOOLCHAIN_URL }}" | sudo tar --strip-components=1 --zstd -xvf -C /opt/toolchain
         echo "External toolchain downloaded and extracted to /opt/toolchain"
         echo "TOOLCHAIN_PATH=/opt/toolchain" >> $GITHUB_ENV
         echo "::endgroup::"
